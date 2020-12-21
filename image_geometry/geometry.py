@@ -1,10 +1,4 @@
-"""
-Various geometry related functions
-
-Author: Roman Juranek <ijuranek@fit.vutbr.cz>
-
-Development of this software was funded by
-TACR project TH04010394, Progressive Image Processing Algorithms.
+""" Various geometry related functions
 """
 
 import numpy as np
@@ -25,9 +19,18 @@ def homogenous(x, n):
     c = (x * n).sum(axis=1)
     return np.concatenate([n, -c.reshape(-1,1)], axis=1)
 
+def scale_homogenous(x, n, scale, shift):
+
+    x = (np.atleast_2d(x) - np.atleast_2d(shift))/scale
+    n = np.atleast_2d(n)
+    """ Homogenous coordinates of lines - ax+by+c = 0 """
+    assert x.shape[0] == n.shape[0], "Number of rows of 'x' and 'n' must match"
+    assert x.shape[1] == 2 and n.shape[1] == 2, "'x' and 'n' must be 2 column matrices"
+    c = (x * n).sum(axis=1)
+    return np.concatenate([n, -c.reshape(-1,1)], axis=1)
 
 def inclination(x, n, point):
-    """ Returns cos(anlgle) between lines (x, n) and point p
+    """ Returns cos(angle) between lines (x, n) and point p
     """
     assert x.shape[1] in {2,3}, "x must have 2 or 3 columns"
     assert n.shape[1] == 2, "n must have 2 columns"
@@ -65,7 +68,6 @@ def image_point_to_world_coordinates(V, focal, pp, pixel_size):
     #world_coord = np.array([-V[0] + pp[0], V[1] - pp[1],focal/pixel_size])*pixel_size
     world_coord = world_coord/np.linalg.norm(world_coord, axis=1).reshape(-1, 1)
     return world_coord
-
 
 def world_point_to_image_coordinates(W, focal, pp, pixel_size):
     image_coord = [-focal*W[0]/(W[2]*pixel_size) + pp[0],focal*W[1]/(W[2]*pixel_size) + pp[1]]

@@ -13,8 +13,6 @@ import logging
 import pathlib
 import skimage
 
-import lgroup
-
 
 def parse_args():
     pass

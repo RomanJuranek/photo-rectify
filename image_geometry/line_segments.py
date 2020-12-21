@@ -2,9 +2,6 @@
 Gradient based line segment detection
 
 Author: Roman Juranek <ijuranek@fit.vutbr.cz>
-
-Development of this software was funded by
-TACR project TH04010394, Progressive Image Processing Algorithms.
 """
 
 
@@ -20,7 +17,7 @@ from skimage.filters import scharr_h, scharr_v
 from skimage.measure import block_reduce
 from skimage.segmentation import flood
 
-from .geometry import homogenous, inclination, wpca
+from .geometry import homogenous, inclination, wpca, scale_homogenous
 
 
 def triangle_kernel(size=1):
@@ -95,6 +92,57 @@ class LineSegments:
                 err=err,
                 weight=w)
 
+    @staticmethod
+    def load_from_dict(line_dict):
+        w = line_dict['weight']
+        err = line_dict['error']
+        endpoints = line_dict['line']
+        endpoints = endpoints[:,(1,0,3,2)]
+        d = endpoints[:,2:4] - endpoints[:,0:2]
+        a = endpoints[:,0:2] + d/2
+        d /= np.linalg.norm(d,axis=1).reshape(-1,1)
+        e1 = np.linalg.norm(endpoints[:,0:2] - a, axis=1)
+
+        group = line_dict['group']
+        return LineSegments(
+            anchor=np.array(a,"f"),
+            direction=np.array(d,"f"),
+            endpt= np.vstack([-1*e1,e1]).T,
+            err=np.array(err,"f"),
+            weight=np.array(w,"f")), group
+
+    @staticmethod
+    def load_from_array(line_array):
+        w = np.ones(line_array.shape[0])
+        err = np.zeros(line_array.shape[0])
+        endpoints = line_array
+        d = endpoints[:, 2:4] - endpoints[:, 0:2]
+        a = endpoints[:, 0:2] + d / 2
+        d /= np.linalg.norm(d,axis=1).reshape(-1,1)
+
+        e1 = np.linalg.norm(endpoints[:,0:2] - a, axis=1)
+
+        return LineSegments(
+            anchor=np.array(a,"f"),
+            direction=np.array(d,"f"),
+            endpt= np.vstack([-1*e1,e1]).T,
+            err=np.array(err,"f"),
+            weight=np.array(w,"f"))
+
+
+    @staticmethod
+    def concatenate(ls):
+        anchor = np.concatenate([l.anchor for l in ls])
+        direction = np.concatenate([l.direction for l in ls])
+        endpt = np.concatenate([l.endpt for l in ls])
+        err = np.concatenate([l.err for l in ls])
+        weight = np.concatenate([l.weight for l in ls])
+        return LineSegments(anchor=anchor, direction=direction,endpt=endpt,err=err, weight=weight)
+
+    def switch_axes(self):
+        self.anchor =  self.anchor[:,::-1]
+        self.direction = self.direction[:,::-1]
+
     def save(self, filename:str):
         with open(filename, "wb") as f:
             pickle.dump((self.anchor, self.direction, self.endpt, self.eigens, self.err, self.weight), f)
@@ -133,8 +181,21 @@ class LineSegments:
         a,b = np.split(self.direction, 2, axis=1)
         return np.concatenate([-b,a], axis=1)
 
+    def normalized_direction_vector(self):
+        d = self.direction
+        d /= np.linalg.norm(d, axis=1).reshape(-1, 1)
+        return d
+
+    def normalized_normal_vector(self):
+        n = self.normal_vector()
+        n /= np.linalg.norm(n,axis=1).reshape(-1, 1)
+        return n
+
     def homogenous(self):
         return homogenous(self.anchor, self.normal_vector())
+
+    def scale_homogenous(self, scale, shift):
+        return scale_homogenous(self.anchor, self.normal_vector(), scale, shift)
 
     def inclination(self, p):
         return inclination(self.anchor_point(), self.normal_vector(), p)
@@ -146,7 +207,7 @@ class LineSegments:
             anchor=self.anchor[mask,...],
             direction=self.direction[mask,...],
             endpt=self.endpt[mask,...],
-            eigens=self.eigens[mask],
+#            eigens=self.eigens[mask],
             err=self.err[mask],
             weight=self.weight[mask])
 
@@ -208,8 +269,10 @@ def find_line_segments_ff(image,
 
     Output
     ------
-    lines : LineSegments
-        Line segments detected in the image
+
+
+    Example
+    -------
 
     """
     image = image.astype("f") / image.max()
