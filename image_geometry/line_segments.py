@@ -6,18 +6,12 @@ Author: Roman Juranek <ijuranek@fit.vutbr.cz>
 
 
 import logging
-import pickle
-from itertools import compress
-from math import floor
 
 import numpy as np
 import scipy.ndimage as ni
-import skimage.morphology as mo
-from skimage.filters import scharr_h, scharr_v
-from skimage.measure import block_reduce
 from skimage.segmentation import flood
 
-from .geometry import homogenous, inclination, wpca, scale_homogenous
+from .geometry import inclination, wpca
 
 
 def triangle_kernel(size=1):
@@ -55,161 +49,144 @@ def fit_pca(X, weights=None):
 
 
 class LineSegments:
-    """ Line segments and their parameters """
-    def __init__(self, **kwargs):
-        self.__dict__ = kwargs
-
+    """
+    A set of line segments defined by their coordinates
+    """
+    def __init__(self, C, **kwargs):
+        if not isinstance(C,np.ndarray):
+            raise TypeError("Coordinates must be a numpy array")
+        if C.ndim != 2 or C.shape[1] != 4:
+            raise ValueError("Coordinates must be a matrix with 4 columns")
+        self.C = np.atleast_2d(C.copy())
+        self.fields = dict()
+        for field,value in kwargs.items():
+            self.set_field(field, value)
     @staticmethod
-    def from_points(iterable):
-        params = []
-        for X,W in iterable:
-            A, U, E = fit_pca(X, W)
-            D = U[np.argmax(E)]  # D - direction vector |D|=1
-            N = U[np.argmin(E)]  # N - normal vector |N|=1
-            t = np.dot(A-X, D)   # projection of X to direction vector - A + t*D is the projection coordinates
-            e = np.abs(np.dot(A-X, N))
-            params.append(
-                (A, D, E, (t.min(),t.max()), e.mean(), W.mean())
-            )
-        anchor,direction,eigens,endpt,err,weight = zip(*params)
-        return LineSegments(
-            anchor=np.array(anchor,"f"),
-            direction=np.array(direction,"f"),
-            endpt=np.array(endpt,"f"),
-            eigens=np.array(eigens,"f"),
-            err=np.array(err,"f"),
-            weight=np.array(weight,"f"))
-
+    def fit_segment(X:np.ndarray, W:np.ndarray):
+        """Fit a single line segment to points"""
+        A, U, E = fit_pca(X, W)
+        D = U[np.argmax(E)]  # D - direction vector |D|=1
+        N = U[np.argmin(E)]  # N - normal vector |N|=1
+        t = np.dot(A-X, D)   # projection of X to direction vector - A + t*D is the projection coordinates
+        e = np.dot(A-X, N)
+        x1,y1  = A - D * t.min()
+        x2,y2  = A - D * t.max()
+        return [x1,y1,x2,y2], np.abs(e).max(), W.mean()
     @staticmethod
-    def load(filename:str):
-        with open(filename, "rb") as f:
-            a,d,e,eig,err,w = pickle.load(f)
-            return LineSegments(
-                anchor=a,
-                direction=d,
-                endpt=e,
-                eigens=eig,
-                err=err,
-                weight=w)
+    def fit(iterable):
+        """Fit multiple line segments and return instance of LineSegments.
 
-    @staticmethod
-    def load_from_dict(line_dict):
-        w = line_dict['weight']
-        err = line_dict['error']
-        endpoints = line_dict['line']
-        endpoints = endpoints[:,(1,0,3,2)]
-        d = endpoints[:,2:4] - endpoints[:,0:2]
-        a = endpoints[:,0:2] + d/2
-        d /= np.linalg.norm(d,axis=1).reshape(-1,1)
-        e1 = np.linalg.norm(endpoints[:,0:2] - a, axis=1)
+        Exceptions may be raised when nonconforming tuple item,
+        or wrong shapes of arrays is encountered.
 
-        group = line_dict['group']
-        return LineSegments(
-            anchor=np.array(a,"f"),
-            direction=np.array(d,"f"),
-            endpt= np.vstack([-1*e1,e1]).T,
-            err=np.array(err,"f"),
-            weight=np.array(w,"f")), group
+        Input
+        -----
+        iterable:
+            An iterable object providing (X, W) tuples where X is a
+            numpy array with pointw and W array with point weights.
 
-    @staticmethod
-    def load_from_array(line_array):
-        w = np.ones(line_array.shape[0])
-        err = np.zeros(line_array.shape[0])
-        endpoints = line_array
-        d = endpoints[:, 2:4] - endpoints[:, 0:2]
-        a = endpoints[:, 0:2] + d / 2
-        d /= np.linalg.norm(d,axis=1).reshape(-1,1)
+        Output
+        ------
+        L : LineSegments
+            New instance of LineSegments with line segments fitted to
+            the points in the input iterable. It contains fields "width"
+            and "weight".
 
-        e1 = np.linalg.norm(endpoints[:,0:2] - a, axis=1)
-
-        return LineSegments(
-            anchor=np.array(a,"f"),
-            direction=np.array(d,"f"),
-            endpt= np.vstack([-1*e1,e1]).T,
-            err=np.array(err,"f"),
-            weight=np.array(w,"f"))
-
-
-    @staticmethod
-    def concatenate(ls):
-        anchor = np.concatenate([l.anchor for l in ls])
-        direction = np.concatenate([l.direction for l in ls])
-        endpt = np.concatenate([l.endpt for l in ls])
-        err = np.concatenate([l.err for l in ls])
-        weight = np.concatenate([l.weight for l in ls])
-        return LineSegments(anchor=anchor, direction=direction,endpt=endpt,err=err, weight=weight)
-
-    def switch_axes(self):
-        self.anchor =  self.anchor[:,::-1]
-        self.direction = self.direction[:,::-1]
-
-    def save(self, filename:str):
-        with open(filename, "wb") as f:
-            pickle.dump((self.anchor, self.direction, self.endpt, self.eigens, self.err, self.weight), f)
-
-    @property
-    def size(self):
-        return self.anchor.shape[0]
-
-    def anchor_point(self):
-        return self.anchor
-
-    def direction_vector(self):
-        return self.direction
-
-    def coordinates(self):
-        e0  = self.anchor - self.direction * self.endpt[:,0,None]
-        e1  = self.anchor - self.direction * self.endpt[:,1,None]
-        return np.hstack([e0,e1])
-
-    def length(self):
-        return np.abs(self.endpt[:,1] - self.endpt[:,0])
-
-    def max_eigen(self):
-        return np.max(self.eigens, axis=1)
-
-    def min_eigen(self):
-        return np.fmax(np.min(self.eigens, axis=1), 1e-3)
-
-    def reprojection_error(self):
-        return self.err
-
-    def line_weight(self):
-        return self.weight
-
-    def normal_vector(self):
-        a,b = np.split(self.direction, 2, axis=1)
-        return np.concatenate([-b,a], axis=1)
-
-    def normalized_direction_vector(self):
-        d = self.direction
-        d /= np.linalg.norm(d, axis=1).reshape(-1, 1)
-        return d
-
-    def normalized_normal_vector(self):
-        n = self.normal_vector()
-        n /= np.linalg.norm(n,axis=1).reshape(-1, 1)
-        return n
-
-    def homogenous(self):
-        return homogenous(self.anchor, self.normal_vector())
-
-    def scale_homogenous(self, scale, shift):
-        return scale_homogenous(self.anchor, self.normal_vector(), scale, shift)
-
-    def inclination(self, p):
-        return inclination(self.anchor_point(), self.normal_vector(), p)
-
-    def gather(self, mask):
-        """ Return subset of lines """
-        assert mask.dtype == np.bool, "Vole!"
-        return LineSegments(
-            anchor=self.anchor[mask,...],
-            direction=self.direction[mask,...],
-            endpt=self.endpt[mask,...],
-#            eigens=self.eigens[mask],
-            err=self.err[mask],
-            weight=self.weight[mask])
+        See also
+        --------
+        LineSegments.fit_segment - used internally fot segment fitting
+        """
+        coords, width, weight = zip(*(LineSegments.fit_segment(X, W) for X,W in iterable))
+        L = LineSegments(np.array(coords), width=np.array(width), weight=np.array(weight))
+        return L
+    @classmethod
+    def from_dict(line_dict:dict):
+        L = LineSegments(line_dict["coordinates"])
+        for field, val in line_dict.items():
+            if field is not "coordinates":
+                L.set_field(field, val)
+    def to_dict(self) -> dict:
+        pass
+    def __len__(self) -> int:
+        return self.C.shape[0]
+    def __getitem__(self, indices):
+        L = LineSegments(self.C[indices])
+        for field, val in self.fields.items():
+            L.set_field(field, val[indices])
+        return L
+    def cat(self, other):
+        """Concatenate two sets of line segments, keeping only common fields"""
+        new_keys = set(self.get_fields()).intersection(other.get_fields())
+        L = LineSegments(np.concatenate([self.coordinates(), other.coordinates()], axis=0))
+        for k in new_keys:
+            val_a = self.get_field(k)
+            val_b = other.get_field(k)
+            L.set_field(k, np.concatenate([val_a, val_b], axis=0))
+        return L
+    def normalized(self, scale=1, shift=(0,0)):
+        # TODO: validate shift 2-Tuple or np.array of size 2, 1x2 shape
+        shift = np.tile(np.atleast_2d(shift), 2)
+        L = LineSegments(C = (self.C - shift) / scale)
+        for field, val in self.fields.items():
+            L.set_field(field, val)
+        return L
+    def coordinates(self) -> np.ndarray:
+        return self.C
+    def endpoints(self, homogeneous=False):
+        A, B = np.split(self.C, 2, axis=1)
+        if homogeneous:
+            ones = np.ones((A.shape[0],1),"f")
+            A = np.hstack([A, ones])
+            B = np.hstack([B, ones])
+        return A, B
+    # anchor
+    def anchor(self) -> np.ndarray:
+        A, B = self.endpoints()
+        return (A + B)/2
+    # length
+    def length(self) -> np.ndarray:
+        A, B = self.endpoints()
+        return np.linalg.norm(B-A, axis=1)
+    # normal
+    def normal(self) -> np.ndarray:
+        direction = self.direction()
+        u, v = np.split(direction, 2, axis=-1)
+        return np.hstack([-v, u])
+    # direction
+    def direction(self) -> np.ndarray:
+        A, B = self.endpoints()
+        direction = (B - A)
+        direction /= np.linalg.norm(direction, axis=-1, keepdims=True)
+        return direction
+    # homogeneous
+    def homogeneous(self, normalized=True) -> np.ndarray:
+        A, B = self.endpoints(homogeneous=True)
+        h = np.cross(A, B)
+        if normalized:
+            h /= np.linalg.norm(h, axis=-1, keepdims=True)
+        return h
+    # inclination
+    def inclination(self, p) -> np.ndarray:
+        return inclination(self.anchor(), self.normal(), p)
+    #
+    def _validate_field(self, v:np.ndarray) -> bool:
+        if not isinstance(v, np.ndarray):
+            raise TypeError("Only numpy arrays are supported for fields")
+        if v.shape[0] != len(self):
+            raise ValueError(f"Expected {len(self)} items, {v.shape[0]} passed")
+    # get_field
+    def get_field(self, field):
+        return self.fields[field]
+    # set_field
+    def set_field(self, field, value, overwrite=True):
+        self._validate_field(value)
+        if overwrite and field in self.fields:
+            raise KeyError(f"Field {field} already present")
+        self.fields[field] = value.copy()
+    def has_field(self, field) -> bool:
+        return field in self.fields
+    def get_fields(self):
+        return self.fields.keys()
 
 
 def fit_line_segments(components, mag, min_size=50, max_size=10000, scale=1):
@@ -218,8 +195,8 @@ def fit_line_segments(components, mag, min_size=50, max_size=10000, scale=1):
         for c in components:
             X = c["X"]
             if min_size < X.shape[0] < max_size:
-                yield X*scale, mag[X[:,0], X[:,1]]
-    return LineSegments.from_points(line_support())
+                yield X*scale, mag[X[:,1], X[:,0]]
+    return LineSegments.fit(line_support())
 
 
 def mask_borders(image, b, value):
@@ -269,7 +246,8 @@ def find_line_segments_ff(image,
 
     Output
     ------
-
+    lines: An instance of LineSegments or, if return_internals=True, a dict with
+        internal stuff of the line traing algorithm
 
     Example
     -------
@@ -344,7 +322,8 @@ def find_line_segments_ff(image,
         tol = seed_mag * mag_tol
         component = flood(grad_images[seed_bin], (a,b), tolerance=tol, selem=np.ones( (3,3) ) )
         found[component] = i
-        component_points = np.array(np.nonzero(component)).T  # (N,2)
+        inds = np.nonzero(component)
+        component_points = np.array((inds[1], inds[0]),"i").T
         components.append({"X": component_points, "seed_point": seed})
 
     logging.debug("Calculating segment parameters")
