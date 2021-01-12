@@ -1,15 +1,14 @@
-import json
-import os
 import random
 from collections import deque
-from itertools import cycle, chain, islice, repeat, tee
-from pathlib import Path
+from itertools import islice
+from queue import deque
 
-import cv2
-import imgaug.augmenters as iaa
 import numpy as np
-from imgaug.augmentables import Batch, KeypointsOnImage
+from imgaug.augmentables import Keypoint, KeypointsOnImage
 from imgaug.augmenters import *
+from skimage.transform import rescale
+
+from .sord import soft_label_rho, soft_label_theta
 from .utils import Normalizer
 
 
@@ -21,7 +20,7 @@ def center_crop(output_shape=(224,224)):
     ], random_order=False)
 
 
-def random_crop(output_shape):
+def random_crop(output_shape=(224,224)):
     height, width = output_shape
     size = min(output_shape)
     return Sequential([
@@ -32,7 +31,7 @@ def random_crop(output_shape):
                 Sometimes(0.3, Sharpen( (0.1,0.5) ) ),
                 Sometimes(0.3, GaussianBlur( (0.5,1) ) ),
             ], random_order=True),
-        Flipud(0.2),
+        #Flipud(0.2),
         #Resize({"shorter-side":(size, 2*size), "longer-side":"keep-aspect-ratio"},interpolation="nearest"),
         CropToFixedSize(width=width,height=height),
         Sometimes(0.3, AdditiveGaussianNoise((2,10)) ),
@@ -40,16 +39,6 @@ def random_crop(output_shape):
         Sometimes(0.1, Cutout(size=(0.1,0.2), nb_iterations=(1,3), fill_mode="gaussian", fill_per_channel=True)),
     ],
     random_order=False)
-
-     
-
-def batch_generator(iterator, augmenter, batch_size=16):
-    try:
-        while True:
-            imgs,kps = zip(*(item for item in islice(iterator, batch_size)))
-            yield augmenter.augment_batch_(Batch(images=imgs, keypoints=kps))
-    except StopIteration:
-        return
 
 
 def homogenous(kps, center=(0,0)):
@@ -59,24 +48,73 @@ def homogenous(kps, center=(0,0)):
     return h
 
 
-def one_hot(x, n_bins, sigma=1):
-    y = np.zeros((x.size, n_bins),"f")
-    for i,b in enumerate(x):
-        y[i,b] = 1
-    y /= y.sum(axis=-1,keepdims=True)
-    return y
+def prescale_image(new_image, size_range):
+     min_size, max_size = size_range
+     img = new_image["image"]
+     A,B = new_image["A"], new_image["B"]
+     size = min(img.shape[:2])
+     new_size = np.random.uniform(min_size, max_size)
+     scale = new_size / size
+     img = rescale(img, scale, anti_aliasing=True, preserve_range=True, multichannel=True).astype("u1")
+     return dict(image=img, A=A*scale, B=B*scale)
 
-def anchor_normal(kps):
-    A,B = kps.keypoints
-    h = np.cross([A.x-112,A.y-112,1],[B.x-112,B.y-112,1])
-    hp = np.array([-h[1],h[0],0])
-    a = np.cross(h,hp)
-    a = a[:2] / a[2]
-    n = h[:2] / np.linalg.norm(h[:2])
-    return a/112, n  
 
-from tensorflow.keras.utils import to_categorical
+def random_image_loader(dataset, size_range = (224,250)):     
+     while True:
+          image_dict = random.choice(dataset)
+          yield prescale_image(image_dict, size_range)
+
+
+def sequential_image_loader(dataset, size_range = (224,250)):     
+    yield from (prescale_image(i, size_range) for i in dataset)
+
+
+def get_image_and_keypoints(image_dict):
+     (x1,y1), (x2,y2) = image_dict["A"], image_dict["B"]
+     image = image_dict["image"]
+     shape = image.shape[:2]
+     kps = KeypointsOnImage([Keypoint(x=x1,y=y1), Keypoint(x=x2,y=y2)], shape=shape)
+     return image, kps
+
+
+def batch_from_dicts(image_dicts, augmenter):
+    image_data = (get_image_and_keypoints(x) for x in image_dicts)
+    images, kps = zip(*image_data)
+    images_aug, kps_aug = augmenter.augment(images=images, keypoints=kps)
+    
+    horizons = np.array([homogenous(k, center=(112,112)) for k in kps_aug])   # (B, 3)
+    norm = np.linalg.norm(horizons[:,:2], axis=-1, keepdims=True)
+    horizons /= norm
+    v = horizons[:,1] < 0
+    horizons[v,:] *= -1
+    theta = np.arctan2(-horizons[:,0],horizons[:,1])
+    
+    rho = horizons[:,2]
+    
+    soft_theta = soft_label_theta(theta, n_bins=100, K=4)                    
+    soft_rho = soft_label_rho(rho, n_bins=100, K=0.05, K_range=100)
+    X = np.array(images_aug,"f")/256
+    return X, [soft_theta, soft_rho]
+
+
+def batch_generator(dataset, augmenter, batch_size=16, stream_window=16, batches_per_window=32):
+    size_range = (256, 300)
+    reader = random_image_loader(dataset, size_range)
+    img_queue = deque(islice(reader, 4), maxlen=stream_window)
+    for img_dict in reader:
+        #print("Adding new image")
+        img_queue.append(img_dict)  # add new image to the queue
+        for _ in range(batches_per_window):  # generate N batches with the images in the queue without reading new one
+            image_dicts = (random.choice(img_queue) for _ in range(batch_size))
+            yield batch_from_dicts(image_dicts, augmenter)
+
+
+
+### Deprecated
+
 from scipy.ndimage import gaussian_filter1d
+from tensorflow.keras.utils import to_categorical
+
 
 def categorical_theta_rho(seq, t_bins = 256, r_bins = 128, center=(0,0)):
     t_bin_map = Normalizer((0,np.pi), (0, t_bins))
