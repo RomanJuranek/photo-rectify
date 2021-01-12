@@ -5,16 +5,16 @@ from .geometry import inclination
 from .utils import *
 
 ##
-def fit_best_vanishing_point(lines:LineSegments, weights, max_iter=1000, scale = 1, shift = [0,0]):
+def fit_best_vanishing_point(lines:LineSegments, max_iter=1000):
+    l = lines.homogeneous()
+    x = lines.anchor()
+    n = lines.normal()
+    length = lines.length()
+    weights = lines.get_field("weight") if lines.has_field("weight") else np.ones((len(lines),1))
 
     best_fit, V = 0, None
 
     order = np.argsort(weights)[::-1] # Order of lines
-
-    l = lines.scale_homogenous(scale, shift)
-    x = (lines.anchor_point() - shift)/scale
-    n = lines.normal_vector()
-    length = lines.length()
 
     for n_iters in range(max_iter):
         # Select two from initial group
@@ -31,24 +31,25 @@ def fit_best_vanishing_point(lines:LineSegments, weights, max_iter=1000, scale =
 
     if np.abs(V[2]) > 1e-6:
         V = V/V[2]
-        V[0:2] = V[0:2] * scale + shift
+
     return V, best_fit
 
 ##
-def find_line_groups_ransac_only(lines:LineSegments, scale = 1, shift = [0,0]):
-    #n = lines.size
+def find_line_groups_ransac_only(lines:LineSegments):
     line_groups = []
+    group_id = 0
 
-    while lines.size > 2 and len(line_groups) < 5:
-        V1,_ = fit_best_vanishing_point(lines, lines.line_weight(), 10000, scale, shift)
+    while len(lines) > 2 and len(line_groups) < 5:
+        V1,_ = fit_best_vanishing_point(lines, 1000)
         W1 = lines.inclination(V1)
-        inlier_mask = W1>np.cos(np.pi*2/180) # 2deg tolerance
-        line_groups.append(lines.gather(inlier_mask) )
-        lines = lines.gather(W1 < np.cos(np.pi*4/180)) # 4deg tolerance
+        inlier_mask = W1 > np.cos(np.pi*2/180) # 2deg tolerance
+        lines_g = lines[inlier_mask]
+        lines_g.set_field("groups", np.full(len(lines_g), group_id))
+        line_groups.append(lines_g)
+        lines = lines[W1 < np.cos(np.pi*4/180)] # 4deg tolerance
+        group_id = group_id+1
 
-    lines = LineSegments.concatenate(line_groups)
-    groups = np.concatenate([np.full(l.size, i) for i, l in enumerate(line_groups)])
-    return lines, groups
+    return LineSegments.concatenate(line_groups)
 ##
 def find_line_groups_and_vps(lines:LineSegments, scale = 1, shift = [0,0]):
     #n = lines.size
