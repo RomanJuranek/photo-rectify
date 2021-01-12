@@ -6,6 +6,7 @@ Author: Roman Juranek <ijuranek@fit.vutbr.cz>
 
 
 import logging
+from collections import defaultdict
 
 import numpy as np
 import scipy.ndimage as ni
@@ -99,14 +100,32 @@ class LineSegments:
         coords, width, weight = zip(*(LineSegments.fit_segment(X, W) for X,W in iterable))
         L = LineSegments(np.array(coords), width=np.array(width), weight=np.array(weight))
         return L
-    @classmethod
+    @staticmethod
     def from_dict(line_dict:dict):
+        """Build a new instance from dictionary"""
         L = LineSegments(line_dict["coordinates"])
         for field, val in line_dict.items():
             if field is not "coordinates":
                 L.set_field(field, val)
+        return L
+    @staticmethod
+    def concatenate(iterable):
+        """Concatenate multiple LineSegments instances to a new instance"""
+        ls = [l.to_dict() for l in iterable]
+        common_fields = set.intersection(*[set(l.keys()) for l in ls])
+        D = defaultdict(list)
+        for l in ls:
+            for k in common_fields:
+                D[k].append(l[k])
+        for k,v in D.items():
+            D[k] = np.concatenate(D[k])
+        return LineSegments.from_dict(D)
     def to_dict(self) -> dict:
-        pass
+        D = dict()
+        D["coordinates"] = self.coordinates()
+        for field,value in self.fields.items():
+            D[field] = value
+        return D
     def __len__(self) -> int:
         return self.C.shape[0]
     def __getitem__(self, indices):
