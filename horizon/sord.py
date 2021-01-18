@@ -32,7 +32,8 @@ def theta_from_soft_label(theta_pred):
     y = (t * np.sin(theta).reshape(1,-1)).sum(-1)
     d = np.array([x,y]).T
     d /= np.linalg.norm(d, axis=-1, keepdims=True)
-    theta = np.arccos(d @ [0,1])
+    #theta = np.arccos(d @ [0,1])
+    theta = -np.arctan2(d[:,0], d[:,1])
     return theta
 
 
