@@ -35,21 +35,23 @@ def fit_best_vanishing_point(lines:LineSegments, max_iter=1000):
     return V, best_fit
 
 ##
-def find_line_groups_ransac_only(lines:LineSegments):
+def find_line_groups_ransac_only(lines:LineSegments, inlier_tol_deg=2):
+    """
+    Divide line groups using RANSAC and assign 'group' field
+    """
     line_groups = []
     group_id = 0
-
     while len(lines) > 2 and len(line_groups) < 5:
         V1,_ = fit_best_vanishing_point(lines, 1000)
         W1 = lines.inclination(V1)
-        inlier_mask = W1 > np.cos(np.pi*2/180) # 2deg tolerance
+        inlier_mask = W1 > np.cos(np.pi*inlier_tol_deg/180) # 2deg tolerance
         lines_g = lines[inlier_mask]
-        lines_g.set_field("groups", np.full(len(lines_g), group_id))
+        lines_g.set_field("group", np.full(len(lines_g), group_id))
         line_groups.append(lines_g)
-        lines = lines[W1 < np.cos(np.pi*4/180)] # 4deg tolerance
+        lines = lines[W1 < np.cos(np.pi*5/180)] # 4deg tolerance
         group_id = group_id+1
-
     return LineSegments.concatenate(line_groups)
+
 ##
 def find_line_groups_and_vps(lines:LineSegments, scale = 1, shift = [0,0]):
     #n = lines.size

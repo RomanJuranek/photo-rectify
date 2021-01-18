@@ -51,7 +51,7 @@ def fit_pca(X, weights=None):
 
 class LineSegments:
     """
-    A set of line segments defined by their coordinates
+    A set of line segments defined by their coordinates with arbitrary user-defined fields
     """
     def __init__(self, C, **kwargs):
         if not isinstance(C,np.ndarray):
@@ -74,7 +74,7 @@ class LineSegments:
         x2,y2  = A - D * t.max()
         return [x1,y1,x2,y2], np.abs(e).max(), W.mean()
     @staticmethod
-    def fit(iterable):
+    def fit(iterable) -> "LineSegments":
         """Fit multiple line segments and return instance of LineSegments.
 
         Exceptions may be raised when nonconforming tuple item,
@@ -101,7 +101,7 @@ class LineSegments:
         L = LineSegments(np.array(coords), width=np.array(width), weight=np.array(weight))
         return L
     @staticmethod
-    def from_dict(line_dict:dict):
+    def from_dict(line_dict:dict) -> "LineSegments":
         """Build a new instance from dictionary"""
         L = LineSegments(line_dict["coordinates"])
         for field, val in line_dict.items():
@@ -109,7 +109,7 @@ class LineSegments:
                 L.set_field(field, val)
         return L
     @staticmethod
-    def concatenate(iterable):
+    def concatenate(iterable) -> "LineSegments":
         """Concatenate multiple LineSegments instances to a new instance"""
         ls = [l.to_dict() for l in iterable]
         common_fields = set.intersection(*[set(l.keys()) for l in ls])
@@ -128,12 +128,12 @@ class LineSegments:
         return D
     def __len__(self) -> int:
         return self.C.shape[0]
-    def __getitem__(self, indices):
+    def __getitem__(self, indices) -> "LineSegments":
         L = LineSegments(self.C[indices])
         for field, val in self.fields.items():
             L.set_field(field, val[indices])
         return L
-    def cat(self, other):
+    def cat(self, other) -> "LineSegments":
         """Concatenate two sets of line segments, keeping only common fields"""
         new_keys = set(self.get_fields()).intersection(other.get_fields())
         L = LineSegments(np.concatenate([self.coordinates(), other.coordinates()], axis=0))
@@ -142,7 +142,7 @@ class LineSegments:
             val_b = other.get_field(k)
             L.set_field(k, np.concatenate([val_a, val_b], axis=0))
         return L
-    def normalized(self, scale=1, shift=(0,0)):
+    def normalized(self, scale=1, shift=(0,0)) -> "LineSegments":
         # TODO: validate shift 2-Tuple or np.array of size 2, 1x2 shape
         shift = np.tile(np.atleast_2d(shift), 2)
         L = LineSegments(C = (self.C - shift) / scale)
@@ -194,7 +194,7 @@ class LineSegments:
         if v.shape[0] != len(self):
             raise ValueError(f"Expected {len(self)} items, {v.shape[0]} passed")
     # get_field
-    def get_field(self, field):
+    def get_field(self, field) -> np.ndarray:
         return self.fields[field]
     # set_field
     def set_field(self, field, value, overwrite=True):
