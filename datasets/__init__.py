@@ -37,6 +37,7 @@ from .ecd import EurasianCities
 from .gsw import GoogleDataset
 from .hlw2 import HorizonLinesInTheWildDataset
 from .yud import YorkUrbanDataset
+from .zoner import ZPSHorizons
 
 
 class ImageDirDataset:
