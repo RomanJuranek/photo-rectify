@@ -53,7 +53,21 @@ class LineSegments:
     """
     A set of line segments defined by their coordinates with arbitrary user-defined fields
     """
-    def __init__(self, C, **kwargs):
+    def __init__(self, C:np.ndarray, **kwargs):
+        """
+        Init new instance with a matrix of endpoint coordinates
+
+        Inputs
+        ------
+        C : ndarray
+            (N,4) matrix with (x1,y1,x2,y2) coordinates of endpoints
+        kwargs :
+            optional parameters with fields
+        
+        Example
+        -------
+        L = LineSegments(np.random.rand(10,4), weight=np.random.rand(10))  # 10 random lines with field weight
+        """
         if not isinstance(C,np.ndarray):
             raise TypeError("Coordinates must be a numpy array")
         if C.ndim != 2 or C.shape[1] != 4:
@@ -121,12 +135,14 @@ class LineSegments:
             D[k] = np.concatenate(D[k])
         return LineSegments.from_dict(D)
     def to_dict(self) -> dict:
+        """Convert LineSegments to dict"""
         D = dict()
         D["coordinates"] = self.coordinates()
         for field,value in self.fields.items():
             D[field] = value
         return D
     def __len__(self) -> int:
+        """Get number of line segments"""
         return self.C.shape[0]
     def __getitem__(self, indices) -> "LineSegments":
         L = LineSegments(self.C[indices])
@@ -143,6 +159,7 @@ class LineSegments:
             L.set_field(k, np.concatenate([val_a, val_b], axis=0))
         return L
     def normalized(self, scale=1, shift=(0,0)) -> "LineSegments":
+        """Scale and shift line segments"""
         # TODO: validate shift 2-Tuple or np.array of size 2, 1x2 shape
         shift = np.tile(np.atleast_2d(shift), 2)
         L = LineSegments(C = (self.C - shift) / scale)
@@ -150,8 +167,10 @@ class LineSegments:
             L.set_field(field, val)
         return L
     def coordinates(self) -> np.ndarray:
+        """Get coordinates as (N,4) matrix"""
         return self.C
     def endpoints(self, homogeneous=False):
+        """Return coordinates as two matrices (N,2) or (N,3) if homogeneous=True"""
         A, B = np.split(self.C, 2, axis=1)
         if homogeneous:
             ones = np.ones((A.shape[0],1),"f")
@@ -160,22 +179,27 @@ class LineSegments:
         return A, B
     # anchor
     def anchor(self) -> np.ndarray:
+        """Get central points of lines"""
         A, B = self.endpoints()
         return (A + B)/2
     # length
     def length(self) -> np.ndarray:
+        """Lengths of line segments"""
         A, B = self.endpoints()
         return np.linalg.norm(B-A, axis=1)
     # normal
-    def normal(self) -> np.ndarray:
-        direction = self.direction()
+    def normal(self, normalized:bool=True) -> np.ndarray:
+        """Normal vectors"""
+        direction = self.direction(normalized)
         u, v = np.split(direction, 2, axis=-1)
         return np.hstack([-v, u])
     # direction
-    def direction(self) -> np.ndarray:
+    def direction(self, normalized:bool=True) -> np.ndarray:
+        """Direction vectors"""
         A, B = self.endpoints()
-        direction = (B - A)
-        direction /= np.linalg.norm(direction, axis=-1, keepdims=True)
+        direction = B - A
+        if normalized:
+            direction /= np.linalg.norm(direction, axis=-1, keepdims=True)
         return direction
     # homogeneous
     def homogeneous(self, normalized=True) -> np.ndarray:
