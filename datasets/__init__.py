@@ -34,6 +34,7 @@ from pathlib import Path
 from skimage.io import imread
 
 from .ecd import EurasianCities
+from .gp3k import GeoPose3KDataset
 from .gsw import GoogleDataset
 from .hlw2 import HorizonLinesInTheWildDataset
 from .yud import YorkUrbanDataset
