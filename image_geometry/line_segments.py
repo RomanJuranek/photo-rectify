@@ -231,6 +231,55 @@ class LineSegments:
     def get_fields(self):
         return self.fields.keys()
 
+import redis
+
+
+def set_numpy(redis:redis.Redis, key:str, value:np.ndarray):
+    arr_dict = dict(
+        value=value.tobytes(),
+        dtype=value.dtype.name,
+        shape=np.array(value.shape,"i").tobytes()
+    )
+    redis.hset(key, mapping=arr_dict)
+
+def get_numpy(redis:redis.Redis, key:str) -> np.ndarray:
+    data = redis.hgetall(key)
+    dtype = np.dtype(data[b"dtype"])
+    shape = tuple(np.frombuffer(data[b"shape"], "i"))
+    value = np.frombuffer(data[b"value"], dtype=dtype).reshape(shape)
+    return value
+
+class LineCache:
+    """Redis cache"""
+    def __init__(self, host="localhost", pwd=None, db=0):
+        self.r = redis.Redis(host=host, password=pwd, db=db)
+        
+    @staticmethod
+    def compose_key(dataset, image_id, method):
+        return f"{dataset}:{image_id}:{method}"
+
+    def __setitem__(self, key:str, lines:LineSegments):
+        set_numpy(self.r, key+":lines", lines.coordinates())
+        for name, value in lines.fields.items():
+            redis_key = key + f":{name}"
+            set_numpy(self.r, redis_key, value)
+
+    def __getitem__(self, key) -> LineSegments:
+        redis_keys = list(map(bytes.decode,self.r.keys(key+"*")))
+        print(redis_keys)
+        if not redis_keys:
+            raise KeyError(f"{key} not found")
+        fields = dict()
+        lines = get_numpy(self.r, key+":lines")
+        if lines is None:
+            raise KeyError(f"Cannot find lines for {key}")
+        for k in redis_keys:
+            key_parts = k.split(":")
+            field_name = key_parts[-1]
+            if field_name == "lines": continue
+            fields[field_name] = get_numpy(self.r, k)
+        return LineSegments(lines, **fields)
+
 
 def fit_line_segments(components, mag, min_size=50, max_size=10000, scale=1):
     """ Fit line segments on image components and return instance of LineSegments """
