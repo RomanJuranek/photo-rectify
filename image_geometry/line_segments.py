@@ -251,8 +251,8 @@ def get_numpy(redis:redis.Redis, key:str) -> np.ndarray:
 
 class LineCache:
     """Redis cache"""
-    def __init__(self, host="localhost", pwd=None, db=0):
-        self.r = redis.Redis(host=host, password=pwd, db=db)
+    def __init__(self, r:redis.Redis):
+        self.r = r
         
     @staticmethod
     def compose_key(dataset, image_id, method):
@@ -301,6 +301,7 @@ def mask_borders(image, b, value):
 
 
 def find_line_segments_ff(image,
+                          mask=None,
                           seed_radius=7,
                           border_size=4,
                           n_bins=8,
@@ -355,6 +356,8 @@ def find_line_segments_ff(image,
     mask_borders(dx, border_size, 0)
     mask_borders(dy, border_size, 0)
     mag = np.sqrt(dx*dx + dy*dy)
+    if mask is not None:
+        mag *= mask
     
     # if block_size > 1:
     #     block_size = (block_size,)*2  # scalar x -> tuple (x,x)
