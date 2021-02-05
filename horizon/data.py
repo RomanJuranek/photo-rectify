@@ -1,10 +1,11 @@
 import random
 from collections import deque
-from itertools import islice
+from itertools import count, islice
 from queue import deque
+from typing import Any, Sequence
 
 import numpy as np
-from imgaug.augmentables import Keypoint, KeypointsOnImage
+from imgaug.augmentables import Keypoint, KeypointsOnImage, HeatmapsOnImage, heatmaps
 from imgaug.augmenters import *
 from skimage.transform import rescale
 
@@ -24,21 +25,23 @@ def random_crop(output_shape=(224,224)):
     height, width = output_shape
     size = min(output_shape)
     return Sequential([
+        #Resize({"shorter-side":(size, 1.5*size), "longer-side":"keep-aspect-ratio"},interpolation="nearest"),
         Sequential(
             [
                 GammaContrast( (0.5,2) ),
-                Affine(rotate=(-30,30), mode="reflect", order=3),
+                Rotate(mode="reflect"),
+                #Affine(rotate=(-30,30), mode="reflect", order=2),
                 Sometimes(0.3, Sharpen( (0.1,0.5) ) ),
                 Sometimes(0.3, GaussianBlur( (0.5,1) ) ),
             ], random_order=True),
-        #Flipud(0.2),
-        #Resize({"shorter-side":(size, 2*size), "longer-side":"keep-aspect-ratio"},interpolation="nearest"),
+        Fliplr(0.5),
         CropToFixedSize(width=width,height=height),
-        Sometimes(0.3, AdditiveGaussianNoise((2,10)) ),
+        Sometimes(0.3, AdditiveGaussianNoise((1,5)) ),
         Sometimes(0.1, Grayscale()),
         Sometimes(0.1, Cutout(size=(0.1,0.2), nb_iterations=(1,3), fill_mode="gaussian", fill_per_channel=True)),
     ],
     random_order=False)
+
 
 
 def homogenous(kps, center=(0,0)):
@@ -56,32 +59,30 @@ def prescale_image(new_image, size_range):
      new_size = np.random.uniform(min_size, max_size)
      scale = new_size / size
      img = rescale(img, scale, anti_aliasing=True, preserve_range=True, multichannel=True).astype("u1")
-     return dict(image=img, A=A*scale, B=B*scale)
-
-
-def random_image_loader(dataset, size_range = (224,250)):     
-     while True:
-          image_dict = random.choice(dataset)
-          yield prescale_image(image_dict, size_range)
-
-
-def sequential_image_loader(dataset, size_range = (224,250)):     
-    yield from (prescale_image(i, size_range) for i in dataset)
+     out_dict = dict(image=img, A=A*scale, B=B*scale)
+     if "masks" in new_image:
+         masks = rescale(new_image["masks"], scale, anti_aliasing=False, preserve_range=True, multichannel=True)
+         out_dict.update(masks=masks)
+     return out_dict
 
 
 def get_image_and_keypoints(image_dict):
-     (x1,y1), (x2,y2) = image_dict["A"], image_dict["B"]
-     image = image_dict["image"]
-     shape = image.shape[:2]
-     kps = KeypointsOnImage([Keypoint(x=x1,y=y1), Keypoint(x=x2,y=y2)], shape=shape)
-     return image, kps
+    (x1,y1), (x2,y2) = image_dict["A"], image_dict["B"]
+    image = image_dict["image"]
+    shape = image.shape[:2]
+    kps = KeypointsOnImage([Keypoint(x=x1,y=y1), Keypoint(x=x2,y=y2)], shape=shape)
+    heatmaps = None
+    if "masks" in image_dict: # Optionally return heatmeps
+        heatmaps = HeatmapsOnImage(image_dict["masks"], shape)
+    return image, kps, heatmaps
 
 
 def batch_from_dicts(image_dicts, augmenter):
     image_data = (get_image_and_keypoints(x) for x in image_dicts)
-    images, kps = zip(*image_data)
-    images_aug, kps_aug = augmenter.augment(images=images, keypoints=kps)
-    
+    images, kps, heatmaps = zip(*image_data)
+
+    images_aug, kps_aug, heatmaps_aug = augmenter.augment(images=images, keypoints=kps, heatmaps=heatmaps)
+
     horizons = np.array([homogenous(k, center=(112,112)) for k in kps_aug])   # (B, 3)
     norm = np.linalg.norm(horizons[:,:2], axis=-1, keepdims=True)
     horizons /= norm
@@ -93,22 +94,22 @@ def batch_from_dicts(image_dicts, augmenter):
     
     soft_theta = soft_label_theta(theta, n_bins=100, K=4)                    
     soft_rho = soft_label_rho(rho, n_bins=100, K=0.05, K_range=100)
-    X = np.array(images_aug,"f")/256
-    return X, [soft_theta, soft_rho]
+    x_images = np.array(images_aug,"f")/256
+    
+    x_heatmaps = np.array([x.arr_0to1 for x in heatmaps_aug],"f")
+
+    return np.concatenate([x_images, x_heatmaps],axis=-1), [soft_theta, soft_rho]
 
 
-def batch_generator(dataset, augmenter, batch_size=16, stream_window=16, batches_per_window=32):
-    size_range = (256, 300)
-    reader = random_image_loader(dataset, size_range)
-    img_queue = deque(islice(reader, 4), maxlen=stream_window)
+def batch_generator(reader, augmenter, batch_size=16, stream_window=16, batches_per_window=32):
+    img_queue = deque(maxlen=stream_window)
     for img_dict in reader:
-        #print("Adding new image")
+        img_dict = prescale_image(img_dict, (230,260))
+        #print(f"Adding new image, {img_dict['image'].shape}")
         img_queue.append(img_dict)  # add new image to the queue
-        for _ in range(batches_per_window):  # generate N batches with the images in the queue without reading new one
+        for k in range(batches_per_window):  # generate N batches with the images in the queue without reading new one
             image_dicts = (random.choice(img_queue) for _ in range(batch_size))
             yield batch_from_dicts(image_dicts, augmenter)
-
-
 
 ### Deprecated
 
