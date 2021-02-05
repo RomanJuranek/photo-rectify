@@ -223,7 +223,7 @@ class LineSegments:
     # set_field
     def set_field(self, field, value, overwrite=True):
         self._validate_field(value)
-        if overwrite and field in self.fields:
+        if not overwrite and field in self.fields:
             raise KeyError(f"Field {field} already present")
         self.fields[field] = value.copy()
     def has_field(self, field) -> bool:
@@ -266,7 +266,7 @@ class LineCache:
 
     def __getitem__(self, key) -> LineSegments:
         redis_keys = list(map(bytes.decode,self.r.keys(key+"*")))
-        print(redis_keys)
+        #print(redis_keys)
         if not redis_keys:
             raise KeyError(f"{key} not found")
         fields = dict()
