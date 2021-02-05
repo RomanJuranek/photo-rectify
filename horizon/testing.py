@@ -80,12 +80,9 @@ class Evaluator:
         self.needs_eval = True
         if idx not in self.eval_data:
             self.eval_data[idx] = dict()
-        
         y1, y2, angle = get_line_info(A, B, shape)
-
         gt_dict = dict(shape=shape, gt_l=y1, gt_r=y2, gt_angle=angle)
         self.eval_data[idx].update(gt_dict)
-
 
     def add_detection(self, idx, A, B):
         self.needs_eval = True
@@ -121,16 +118,22 @@ class Evaluator:
 
     def horizon_error_auc(self, cutoff=0.25):
         if self.needs_eval:
-            raise RuntimeError("Run evaluate first")
+            self.evaluate()
         return calc_auc(np.array(self.h_err_list), cutoff)
 
     def angular_error_auc(self, cutoff=5):
         if self.needs_eval:
-            raise RuntimeError("Run evaluate first")
+            self.evaluate()
         return calc_auc(np.array(self.a_err_list), cutoff)
     
     def angular_error_ratio(self, limit=2):
         """Return the ratio of samples with angular error lower than the limit (in degrees) """
         if self.needs_eval:
-            raise RuntimeError("Run evaluate first")
+            self.evaluate()
         return (np.array(self.a_err_list) < limit).sum() / len(self.a_err_list)
+
+    def get_indices_by_horizon_error(self):
+        return np.argsort(self.h_err_list)
+
+    def get_indices_by_angular_error(self):
+        return np.argsort(self.a_err_list)
